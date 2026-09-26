@@ -343,6 +343,63 @@ impl ConfigValidator {
             PolicyConfig::RendezvousHash => {
                 // No specific validation needed
             }
+            PolicyConfig::SMetric {
+                hit_ratio,
+                slack,
+                ttft_slo_secs,
+                ttft_slo_secs_per_1k_tokens,
+                attention_crossover_tokens,
+                eviction_interval_secs,
+                max_tree_size,
+            } => {
+                let invalid = |field: &str, value: String, reason: &str| {
+                    Err(ConfigError::InvalidValue {
+                        field: field.to_string(),
+                        value,
+                        reason: reason.to_string(),
+                    })
+                };
+                if !(0.0..=1.0).contains(hit_ratio) {
+                    return invalid(
+                        "hit_ratio",
+                        hit_ratio.to_string(),
+                        "Must be between 0.0 and 1.0",
+                    );
+                }
+                if slack.is_nan() || *slack < 0.0 {
+                    return invalid("slack", slack.to_string(), "Must be >= 0");
+                }
+                if !(ttft_slo_secs.is_finite() && *ttft_slo_secs > 0.0) {
+                    return invalid("ttft_slo_secs", ttft_slo_secs.to_string(), "Must be > 0");
+                }
+                if !(ttft_slo_secs_per_1k_tokens.is_finite() && *ttft_slo_secs_per_1k_tokens >= 0.0)
+                {
+                    return invalid(
+                        "ttft_slo_secs_per_1k_tokens",
+                        ttft_slo_secs_per_1k_tokens.to_string(),
+                        "Must be >= 0",
+                    );
+                }
+                if let Some(tokens) = attention_crossover_tokens {
+                    if !(tokens.is_finite() && *tokens > 0.0) {
+                        return invalid(
+                            "attention_crossover_tokens",
+                            tokens.to_string(),
+                            "Must be > 0",
+                        );
+                    }
+                }
+                if *eviction_interval_secs == 0 {
+                    return invalid(
+                        "eviction_interval_secs",
+                        eviction_interval_secs.to_string(),
+                        "Must be > 0",
+                    );
+                }
+                if *max_tree_size == 0 {
+                    return invalid("max_tree_size", max_tree_size.to_string(), "Must be > 0");
+                }
+            }
         }
         Ok(())
     }
@@ -544,6 +601,17 @@ impl ConfigValidator {
             return Err(ConfigError::IncompatibleConfig {
                 reason: "Program scheduling currently requires regular HTTP routing mode"
                     .to_string(),
+            });
+        }
+        // SMetric learns queues and prefill rates from the regular router's
+        // request lifecycle; the PD routers do not report it.
+        let is_smetric = |policy: &PolicyConfig| matches!(policy, PolicyConfig::SMetric { .. });
+        if !matches!(config.mode, RoutingMode::Regular { .. })
+            && (is_smetric(config.mode.get_prefill_policy(&config.policy))
+                || is_smetric(config.mode.get_decode_policy(&config.policy)))
+        {
+            return Err(ConfigError::IncompatibleConfig {
+                reason: "SMetric policy currently requires regular HTTP routing mode".to_string(),
             });
         }
         // IGW mode is independent - skip other compatibility checks when enabled

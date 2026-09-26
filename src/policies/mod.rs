@@ -17,6 +17,7 @@ mod random;
 mod registry;
 mod rendezvous_hash;
 mod round_robin;
+mod smetric;
 
 pub use cache_aware::{CacheAwareCandidate, CacheAwarePlacement, CacheAwarePolicy};
 pub use consistent_hash::ConsistentHashPolicy;
@@ -27,10 +28,20 @@ pub use random::RandomPolicy;
 pub use registry::PolicyRegistry;
 pub use rendezvous_hash::RendezvousHashPolicy;
 pub use round_robin::RoundRobinPolicy;
+pub use smetric::{SMetricConfig, SMetricPolicy};
 
 /// HTTP headers passed to policies for routing decisions
 /// Key is lowercase header name, value is header value
 pub type RequestHeaders = HashMap<String, String>;
+
+/// Per-request feedback for policies that track the work in flight on each worker.
+///
+/// The router calls [`RequestTracker::on_first_token`] when the selected worker
+/// streams the request's first output, and drops the tracker once the request
+/// leaves the worker, whether it finished, failed or was cancelled.
+pub trait RequestTracker: Send {
+    fn on_first_token(&mut self);
+}
 
 /// Core trait for load balancing policies
 ///
@@ -60,6 +71,21 @@ pub trait LoadBalancingPolicy: Send + Sync + Debug {
         request_text: Option<&str>,
         headers: Option<&RequestHeaders>,
     ) -> Option<usize>;
+
+    /// Select a single worker and, for policies that track in-flight work, a
+    /// tracker the router feeds while the request runs on it.
+    ///
+    /// Default implementation selects with [`Self::select_worker_with_headers`]
+    /// and tracks nothing.
+    fn select_worker_tracked(
+        &self,
+        workers: &[Arc<dyn Worker>],
+        request_text: Option<&str>,
+        headers: Option<&RequestHeaders>,
+    ) -> Option<(usize, Option<Box<dyn RequestTracker>>)> {
+        self.select_worker_with_headers(workers, request_text, headers)
+            .map(|idx| (idx, None))
+    }
 
     /// Select a pair of workers (prefill and decode) for PD routing
     ///
@@ -103,6 +129,12 @@ pub trait LoadBalancingPolicy: Send + Sync + Debug {
     /// Check if this policy needs request text for routing decisions
     fn needs_request_text(&self) -> bool {
         false // Default: most policies don't need request text
+    }
+
+    /// Check if this policy needs the full JSON request body as `request_text`
+    /// instead of the routing text extracted from it
+    fn needs_request_body(&self) -> bool {
+        false
     }
 
     /// Check if this policy needs HTTP headers for routing decisions

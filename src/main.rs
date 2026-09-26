@@ -117,7 +117,7 @@ struct CliArgs {
     worker_urls: Vec<String>,
 
     /// Load balancing policy to use
-    #[arg(long, default_value = "cache_aware", value_parser = ["random", "round_robin", "cache_aware", "power_of_two", "consistent_hash", "rendezvous_hash"])]
+    #[arg(long, default_value = "cache_aware", value_parser = ["random", "round_robin", "cache_aware", "power_of_two", "consistent_hash", "rendezvous_hash", "smetric"])]
     policy: String,
 
     /// Enable Program-level scheduling independently of the request-level
@@ -175,9 +175,30 @@ struct CliArgs {
     #[arg(long, default_value_t = 120)]
     eviction_interval: u64,
 
-    /// Maximum size of the approximation tree for cache-aware routing
+    /// Maximum size of the approximation tree for cache_aware and smetric routing
     #[arg(long, default_value_t = 67108864)] // 2^26
     max_tree_size: usize,
+
+    /// SMetric: minimum cached fraction of the previous turn's prompt to keep a session on its worker
+    #[arg(long, default_value_t = 0.5)]
+    smetric_hit_ratio: f64,
+
+    /// SMetric: multiplier on the TTFT SLO a session's worker must meet to keep the session
+    #[arg(long, default_value_t = 1.0)]
+    smetric_slack: f64,
+
+    /// SMetric: fixed part of the TTFT SLO in seconds
+    #[arg(long, default_value_t = 1.0)]
+    smetric_ttft_slo_secs: f64,
+
+    /// SMetric: prompt-length part of the TTFT SLO in seconds per 1K prompt tokens
+    #[arg(long, default_value_t = 0.0625)]
+    smetric_ttft_slo_secs_per_1k_tokens: f64,
+
+    /// SMetric: context length at which a token's attention costs as much as its linear layers,
+    /// about active_params / (2 * layers * query_heads * head_dim). Unset prices prefill by new tokens
+    #[arg(long)]
+    smetric_attention_crossover_tokens: Option<f64>,
 
     /// Maximum payload size in bytes
     #[arg(long, default_value_t = 536870912)] // 512MB
@@ -406,6 +427,15 @@ impl CliArgs {
                 virtual_nodes: 160, // Default value
             },
             "rendezvous_hash" => PolicyConfig::RendezvousHash,
+            "smetric" => PolicyConfig::SMetric {
+                hit_ratio: self.smetric_hit_ratio,
+                slack: self.smetric_slack,
+                ttft_slo_secs: self.smetric_ttft_slo_secs,
+                ttft_slo_secs_per_1k_tokens: self.smetric_ttft_slo_secs_per_1k_tokens,
+                attention_crossover_tokens: self.smetric_attention_crossover_tokens,
+                eviction_interval_secs: self.eviction_interval,
+                max_tree_size: self.max_tree_size,
+            },
             _ => PolicyConfig::RoundRobin, // Fallback
         }
     }

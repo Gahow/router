@@ -675,6 +675,25 @@ pub enum PolicyConfig {
 
     #[serde(rename = "rendezvous_hash")]
     RendezvousHash,
+
+    #[serde(rename = "smetric")]
+    SMetric {
+        /// Minimum cached fraction of the previous turn's prompt to keep a session
+        hit_ratio: f64,
+        /// Multiplier on the TTFT SLO a session's worker must meet to keep it
+        slack: f64,
+        /// Fixed part of the TTFT SLO (seconds)
+        ttft_slo_secs: f64,
+        /// Prompt-length part of the TTFT SLO (seconds per 1K tokens)
+        ttft_slo_secs_per_1k_tokens: f64,
+        /// Context length at which attention costs as much as the linear layers;
+        /// None prices prefill by new tokens alone
+        attention_crossover_tokens: Option<f64>,
+        /// Interval between cache eviction cycles (seconds)
+        eviction_interval_secs: u64,
+        /// Maximum cache tree size per tenant
+        max_tree_size: usize,
+    },
 }
 
 impl PolicyConfig {
@@ -686,6 +705,7 @@ impl PolicyConfig {
             PolicyConfig::PowerOfTwo { .. } => "power_of_two",
             PolicyConfig::ConsistentHash { .. } => "consistent_hash",
             PolicyConfig::RendezvousHash => "rendezvous_hash",
+            PolicyConfig::SMetric { .. } => "smetric",
         }
     }
 }

@@ -14,6 +14,7 @@ the policy is the same for `grpc://host:port`.
 | `consistent_hash` | Multi-turn conversations, KV cache reuse | Yes | No |
 | `power_of_two` | Load-sensitive workloads | No | Yes |
 | `cache_aware` | Prefix caching optimization | Yes (cache-based) | Yes |
+| `smetric` | Multi-turn agent sessions | Yes (cache-based) | Yes |
 
 ---
 
@@ -236,6 +237,67 @@ vllm-router --policy cache_aware \
 - Workloads with repeated prompt prefixes (system prompts, few-shot examples)
 - When prefix caching is enabled on vLLM workers
 - Multi-tenant deployments with distinct prompt patterns
+
+---
+
+## SMetric
+
+The `smetric` policy keeps each agent session on the worker that holds its KV
+cache, and moves a session only when that worker can no longer meet the
+request's TTFT SLO. It needs no session ID: agents resend their whole
+conversation, so the router reads the turn from the request's messages and
+finds the session's worker as the one with the longest cached prefix.
+
+The policy follows the session-centric scheduling of
+[SMetric](https://arxiv.org/abs/2607.08565) (Wang et al., 2026).
+
+### Configuration
+
+```bash
+vllm-router --policy smetric \
+  --smetric-ttft-slo-secs 1.0 \
+  --smetric-ttft-slo-secs-per-1k-tokens 0.0625 \
+  --worker-urls http://worker1:8000 http://worker2:8000
+```
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `smetric_hit_ratio` | 0.5 | Fraction of the previous turn's prompt a worker must still cache to keep the session |
+| `smetric_slack` | 1.0 | Multiplier on the TTFT SLO a session's worker must meet to keep the session |
+| `smetric_ttft_slo_secs` | 1.0 | Fixed part of the TTFT SLO |
+| `smetric_ttft_slo_secs_per_1k_tokens` | 0.0625 | Part of the TTFT SLO that grows with prompt length |
+| `smetric_attention_crossover_tokens` | unset | Context length at which a token's attention costs as much as its linear layers, about `active_params / (2 * layers * query_heads * head_dim)` (6923 for Qwen3-30B-A3B). Unset prices prefill by new tokens only |
+| `eviction_interval_secs` | 120 | Interval for prefix tree eviction |
+| `max_tree_size` | 2^26 | Maximum characters of the prefix tree per worker |
+
+Each worker's prefill speed is measured rather than configured: every streamed
+request yields its prefill cost over its time to first token, and the policy
+uses the 90th percentile of the last 64 such samples per worker.
+
+### Behavior
+
+For each request, with the cached prefix estimated per worker from an
+approximate prefix tree:
+
+1. **First turn** (no assistant message yet), or the session's worker has
+   evicted it (cached prefix below `smetric_hit_ratio` of the previous turn's
+   prompt): route to the worker minimizing
+   `(queued prefill + this request's prefill) * in-flight requests`.
+2. **Follow-up turn**: stay on the worker with the longest cached prefix if
+   its queued prefill plus this request's own prefill, at its measured prefill
+   speed, fits in `smetric_slack * (ttft_slo_secs + ttft_slo_secs_per_1k_tokens * prompt_k_tokens)`,
+   or if no worker fits. Otherwise migrate as in (1).
+
+Until a worker has enough streamed samples, it is assumed to meet the SLO.
+The policy reads the chat `messages` from the request body; `/v1/completions`
+prompts are routed as first turns. It is supported in regular routing mode.
+
+### Best For
+
+- Coding agents and other clients that resend a growing conversation
+- Workloads where sessions differ widely in length, so pure affinity overloads workers
 
 ---
 
