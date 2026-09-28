@@ -6,7 +6,8 @@
 /// When the last worker of a model is removed, the policy mapping is cleaned up.
 use super::{
     CacheAwareConfig, CacheAwarePolicy, ConsistentHashPolicy, LoadBalancingPolicy,
-    PowerOfTwoPolicy, RandomPolicy, RendezvousHashPolicy, RoundRobinPolicy,
+    PowerOfTwoPolicy, RandomPolicy, RendezvousHashPolicy, RoundRobinPolicy, SMetricConfig,
+    SMetricPolicy,
 };
 use crate::config::types::PolicyConfig;
 use std::collections::HashMap;
@@ -173,6 +174,7 @@ impl PolicyRegistry {
             "cache_aware" => Arc::new(CacheAwarePolicy::new()),
             "power_of_two" => Arc::new(PowerOfTwoPolicy::new()),
             "rendezvous_hash" => Arc::new(RendezvousHashPolicy::new()),
+            "smetric" => Arc::new(SMetricPolicy::new()),
             _ => {
                 warn!("Unknown policy type '{}', using default", policy_type);
                 Arc::clone(&self.default_policy)
@@ -204,6 +206,23 @@ impl PolicyRegistry {
             PolicyConfig::PowerOfTwo { .. } => Arc::new(PowerOfTwoPolicy::new()),
             PolicyConfig::ConsistentHash { .. } => Arc::new(ConsistentHashPolicy::new()),
             PolicyConfig::RendezvousHash => Arc::new(RendezvousHashPolicy::new()),
+            PolicyConfig::SMetric {
+                hit_ratio,
+                slack,
+                ttft_slo_secs,
+                ttft_slo_secs_per_1k_tokens,
+                attention_crossover_tokens,
+                eviction_interval_secs,
+                max_tree_size,
+            } => Arc::new(SMetricPolicy::with_config(SMetricConfig {
+                hit_ratio: *hit_ratio,
+                slack: *slack,
+                ttft_slo_secs: *ttft_slo_secs,
+                ttft_slo_secs_per_1k_tokens: *ttft_slo_secs_per_1k_tokens,
+                attention_crossover_tokens: *attention_crossover_tokens,
+                eviction_interval_secs: *eviction_interval_secs,
+                max_tree_size: *max_tree_size,
+            })),
         }
     }
 

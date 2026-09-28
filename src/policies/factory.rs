@@ -2,7 +2,8 @@
 
 use super::{
     CacheAwareConfig, CacheAwarePolicy, ConsistentHashPolicy, LoadBalancingPolicy,
-    PowerOfTwoPolicy, RandomPolicy, RendezvousHashPolicy, RoundRobinPolicy,
+    PowerOfTwoPolicy, RandomPolicy, RendezvousHashPolicy, RoundRobinPolicy, SMetricConfig,
+    SMetricPolicy,
 };
 use crate::config::PolicyConfig;
 use std::sync::Arc;
@@ -39,6 +40,23 @@ impl PolicyFactory {
                 Arc::new(ConsistentHashPolicy::new())
             }
             PolicyConfig::RendezvousHash => Arc::new(RendezvousHashPolicy::new()),
+            PolicyConfig::SMetric {
+                hit_ratio,
+                slack,
+                ttft_slo_secs,
+                ttft_slo_secs_per_1k_tokens,
+                attention_crossover_tokens,
+                eviction_interval_secs,
+                max_tree_size,
+            } => Arc::new(SMetricPolicy::with_config(SMetricConfig {
+                hit_ratio: *hit_ratio,
+                slack: *slack,
+                ttft_slo_secs: *ttft_slo_secs,
+                ttft_slo_secs_per_1k_tokens: *ttft_slo_secs_per_1k_tokens,
+                attention_crossover_tokens: *attention_crossover_tokens,
+                eviction_interval_secs: *eviction_interval_secs,
+                max_tree_size: *max_tree_size,
+            })),
         }
     }
 
@@ -51,6 +69,7 @@ impl PolicyFactory {
             "cache_aware" | "cacheaware" => Some(Arc::new(CacheAwarePolicy::new())),
             "consistent_hash" | "consistenthash" => Some(Arc::new(ConsistentHashPolicy::new())),
             "rendezvous_hash" | "rendezvoushash" => Some(Arc::new(RendezvousHashPolicy::new())),
+            "smetric" => Some(Arc::new(SMetricPolicy::new())),
             _ => None,
         }
     }
